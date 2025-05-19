@@ -17,6 +17,7 @@ defmodule Commanded.EventStore.Adapters.InMemory do
       :name,
       :serializer,
       persisted_events: [],
+      events_map: %{},
       streams: %{},
       transient_subscribers: %{},
       persistent_subscriptions: %{},
@@ -361,6 +362,7 @@ defmodule Commanded.EventStore.Adapters.InMemory do
     %State{
       next_event_number: next_event_number,
       persisted_events: persisted_events,
+      events_map: events_map,
       persistent_subscriptions: persistent_subscriptions,
       streams: streams
     } = state
@@ -379,6 +381,19 @@ defmodule Commanded.EventStore.Adapters.InMemory do
       end)
       |> Enum.map(&serialize(state, &1))
 
+    # TODO: Figure out
+    #
+    new_events_map =
+      Enum.map(new_events, fn event ->
+        Map.put(events_map, event.event_id, stream_uuid)
+      end)
+
+    Map.intersect(existing_events, events_map, fn key, v1, v2 ->
+      v1 + v2
+    end)
+
+    # END TODO
+
     stream_events = prepend(existing_events, new_events)
     next_event_number = List.last(new_events).event_number + 1
 
@@ -386,7 +401,8 @@ defmodule Commanded.EventStore.Adapters.InMemory do
       state
       | streams: Map.put(streams, stream_uuid, stream_events),
         persisted_events: prepend(persisted_events, new_events),
-        next_event_number: next_event_number
+        next_event_number: next_event_number,
+        events_map: new_events_map
     }
 
     publish_all_events = Enum.map(new_events, &deserialize(state, &1))
@@ -421,6 +437,7 @@ defmodule Commanded.EventStore.Adapters.InMemory do
 
   defp map_to_recorded_event(event_number, stream_uuid, stream_version, now, %EventData{} = event) do
     %EventData{
+      event_id: event_id,
       causation_id: causation_id,
       correlation_id: correlation_id,
       event_type: event_type,
@@ -429,7 +446,7 @@ defmodule Commanded.EventStore.Adapters.InMemory do
     } = event
 
     %RecordedEvent{
-      event_id: UUID.uuid4(),
+      event_id: event_id || UUID.uuid4(),
       event_number: event_number,
       stream_id: stream_uuid,
       stream_version: stream_version,
